@@ -14,7 +14,7 @@
 #define INVALID_SOCKET -1
 #define SOCKET_ERROR -1
 
-SocketListen::SocketListen(bool is_short_connect):fd_listen_(-1)
+SocketListen::SocketListen(bool is_short_connect, MessageQueue& queue):fd_listen_(-1), queue_(queue)
 {
 	is_short_connnect_ = is_short_connect;
 }
@@ -81,7 +81,7 @@ void SocketListen::OnAccept(int fd)
     socklen_t len = sizeof(sin);
 	int socket_fd = accept(fd, (struct sockaddr*)&sin, &len);
 	string ip = inet_ntoa(sin.sin_addr);
-	std::cout << __func__ <<" "<<ip<<" "<<"port: "<<sin.sin_port <<" socket_fd = "<<socket_fd<< std::endl;
+	//std::cout << __func__ <<" "<<ip<<" "<<"port: "<<sin.sin_port <<" socket_fd = "<<socket_fd<< std::endl;
 	if (socket_fd == INVALID_SOCKET || socket_fd == SOCKET_ERROR)
 	{
 		std::cout << __func__<< " listen error errno = "<< errno << std::endl;
@@ -89,15 +89,38 @@ void SocketListen::OnAccept(int fd)
 	}
 	evutil_make_socket_nonblocking(socket_fd);
 
-	SocketStream* ss = SocketStreamMgr::Instance().Add(socket_fd);
-	if (ss == NULL)
-	{
-		SocketStreamMgr::Instance().Remove(socket_fd);
+	SocketStream* ss = SocketStreamMgr::Instance().Add(sin.sin_addr.s_addr, queue_);
+	if (!ss)
 		return ;
-	}
 	ss->SetIsShortConnect(is_short_connnect_);
+	ss->SetSocketFd(socket_fd);
 	ss->buffer_event_ = bufferevent_new(socket_fd, SocketStream::OnReadCb, SocketStream::OnWriteCb, SocketStream::OnErrorCb,ss);
 	bufferevent_base_set(base_, ss->buffer_event_);
 	bufferevent_enable(ss->buffer_event_, EV_READ | EV_WRITE);
 	ss->Connected();
+}
+
+void SocketListen::SendMsg(Message* msg)
+{
+	if (!msg)
+		return ;
+	send_queue_.AddMessage(msg);
+}
+
+void SocketListen::Loop(long cur_time)
+{
+	vector<Message*>* vm = send_queue_.GetMessage();
+	for (int i = 0; i < (*vm).size(); ++i)
+	{
+		Message* msg = (*vm)[i];
+		if (!msg)
+			continue;
+		MsgHeader header;
+		msg->WriteOut(header);
+		SocketStream* ss = SocketStreamMgr::Instance().Get(header.ip, header.id);
+		if (ss)
+		    ss->BufferEventWrite(msg->Data(), msg->Len());
+		delete msg;
+	}
+	(*vm).clear();
 }

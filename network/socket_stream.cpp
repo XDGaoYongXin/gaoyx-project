@@ -3,6 +3,7 @@
 #include <unistd.h>
 #include <string>
 #include <socket_stream.h>
+using namespace std;
 
 SocketStreamMgr::~SocketStreamMgr()
 {
@@ -13,23 +14,25 @@ SocketStreamMgr::~SocketStreamMgr()
 	mgr_.clear();
 }
 
-SocketStream* SocketStreamMgr::Add(int fd)
+SocketStream* SocketStreamMgr::Add(unsigned long ip, MessageQueue& queue)
 {
-	SocketStream* ss = new SocketStream(fd);
-	mgr_[fd] = ss;
-	std::cout << __func__ << " mgr_.size = " << mgr_.size() <<std::endl;
+	int& id = ip_addr_[1];
+	id += 1;
+	SocketStream* ss = new SocketStream(ip, id, queue);
+	mgr_[std::make_pair(ip, id)] = ss;
+	//std::cout << __func__ << " mgr_.size = " << mgr_.size() <<std::endl;
 	return ss;
 }
 
-void SocketStreamMgr::Remove(int fd)
+void SocketStreamMgr::Remove(unsigned long ip, int id)
 {
-	delete mgr_[fd];
-	mgr_.erase(fd);
+	delete mgr_[std::make_pair(ip, id)];
+	mgr_.erase(std::make_pair(ip, id));
 }
 
-SocketStream* SocketStreamMgr::Get(int fd)
+SocketStream* SocketStreamMgr::Get(unsigned long ip, int id)
 {
-	it_ = mgr_.find(fd);
+	it_ = mgr_.find(std::make_pair(ip, id));
 	if (it_ != mgr_.end())
 		return it_->second;
 	return NULL;
@@ -55,24 +58,15 @@ void SocketStream::OnReadCb( bufferevent* e)
 	if (!eb)
 		return ;
 	int len = evbuffer_get_length(eb);
-	std::string infomation;
 	unsigned char* pl = evbuffer_pullup(eb, len);
-	infomation.assign(pl, pl + len);
-	std::cout << infomation << std::endl;
+	MsgHeader msg_header;
+	msg_header.ip = ip_;
+	msg_header.id = id_;
+	Message* msg = new Message();
+	msg->WriteIn((unsigned char *)(&msg_header), sizeof(msg_header));
+	msg->WriteIn(pl, len);
+	queue_.AddMessage(msg);
 	evbuffer_drain(eb, len);
-	std::string msg = "I'm gaoyongxin I love you";
-	char mmsg[10];
-	sprintf(mmsg, "%d", msg.size());
-	std::string str = "HTTP/1.1 200 OK\r\n";
-	str += "Content-Type: text/plain; charset=UTF-8\r\n";
-	str += "Connection: Close\r\n";
-	//str += "Content-Length: 14\r\n";
-	str += "Content-Length: " + std::string(mmsg) + "\r\n";
-	str += "\r\n";
-	str += "I'm gaoyongxin I love you";
-	bufferevent_write(buffer_event_, &str[0], str.size());
-	send_length_ += str.size(); 
-
 }
 
 void SocketStream::OnWriteCb(bufferevent* e, void* arg)
@@ -83,32 +77,21 @@ void SocketStream::OnWriteCb(bufferevent* e, void* arg)
 
 void SocketStream::OnWriteCb(bufferevent* e)
 {
-	struct evbuffer* eb = e->input;
-	if (!eb)
-		return ;
-	int len = evbuffer_get_length(eb);
-	std::string infomation;
-	unsigned char* pl = evbuffer_pullup(eb, len);
-	infomation.assign(pl, pl + len);
-	std::cout << __func__<<" "<<infomation << std::endl;
-	//OnErrorCb(e, 0,this);
 }
 
 void SocketStream::OnErrorCb(bufferevent* e, short ev, void* arg)
 {
 	SocketStream* ss  = static_cast<SocketStream*>(arg);
-	SocketStreamMgr::Instance().Remove(ss->socket_fd_);
-	std::cout << __func__ << std::endl;
+	SocketStreamMgr::Instance().Remove(ss->ip_, ss->id_);
+	//std::cout << __func__ << std::endl;
 }
 
 
 void SocketStream::Connected()
 {
-	//std::string str = "HTTP/1.1 200 OK\r\n";
-	//str += "Content-Type: text/plain; charset=UTF-8\r\n";
-	//str += "Connection: Close\r\n";
-	//str += "\r\n";
-	//str += "I'm gaoyongxin I love you";
-	//std::cout<< __func__ <<std::endl;
-	//bufferevent_write(buffer_event_, &str[0], str.size());
+}
+
+void SocketStream::BufferEventWrite(unsigned char*data, int len)
+{
+	bufferevent_write(buffer_event_, data, len);
 }
